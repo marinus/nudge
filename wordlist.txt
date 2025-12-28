@@ -1,0 +1,59 @@
+# Nudge Wordlist
+# One regex pattern per line
+# Lines starting with # are comments
+# Patterns are matched case-insensitively against subtitle text
+#
+# Tips:
+#   \b = word boundary (prevents "hell" matching "hello")
+#   .* = any characters
+#   (a|b) = either a or b
+#
+# Examples:
+#   \bfuck\b        - matches "fuck" as whole word
+#   \bf+u+c+k+\b    - matches "fuuuck", "ffffuck", etc.
+#   \bshit\b        - matches "shit" as whole word
+#   god\s*damn      - matches "god damn", "goddamn"
+
+# Profanity (with word boundaries)
+\bf+u+c+k+\w*\b
+\bsh+i+t+\w*\b
+\bdamn\w*\b
+\bass\b
+\basshole\b
+\bbitch\w*\b
+\bbastard\b
+\bcrap\b
+hooker
+condom
+sex
+jesus
+god
+"christ "
+fuck
+asshole
+shit
+balls
+penis
+pussy
+bitch
+dickhead
+bitchin
+fuck you
+fucker
+nudescene
+boobs
+banging
+christsake
+Christ's sake
+goddamn
+prick
+hardon
+hard-on
+pissed
+jerking\s+off
+jerkoff
+jerk\s+off
+christ
+
+# Phrases
+god\s*damn

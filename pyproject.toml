@@ -1,0 +1,25 @@
+[project]
+name = "nudge"
+version = "1.0.0"
+description = "Automatically skip objectionable content on AppleTV"
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Marinus van Aswegen"}
+]
+requires-python = ">=3.10"
+dependencies = [
+    "pyatv>=0.14.0",
+    "flask>=3.0.0",
+    "simple-websocket>=1.0.0",
+    "flask-sock>=0.7.0",
+]
+
+[project.scripts]
+nudge = "nudge.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["nudge*"]
