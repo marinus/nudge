@@ -127,7 +127,7 @@ def save_content(
     title: str,
     app: str,
     duration: int,
-    srt_offset: float = 0.0,
+    srt_offset: float | None = None,
     srt_source: Path | None = None,
 ) -> Path:
     """
@@ -138,7 +138,7 @@ def save_content(
         title: Content title.
         app: App name (Netflix, etc.).
         duration: Duration in seconds.
-        srt_offset: Time offset for SRT parsing.
+        srt_offset: Time offset for SRT parsing. If None, preserves existing offset.
         srt_source: Path to source SRT file to copy.
 
     Returns:
@@ -148,6 +148,10 @@ def save_content(
 
     # Load existing content to preserve manual nudges
     existing = load_content(content_id)
+
+    # Preserve existing srt_offset if not explicitly provided
+    if srt_offset is None:
+        srt_offset = existing.get("srt_offset", 0.0) if existing else 0.0
 
     content = {
         "id": content_id,

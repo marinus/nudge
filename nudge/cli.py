@@ -135,7 +135,8 @@ def cmd_test(args):
 
     print(f"Loaded {len(wordlist)} words from wordlist.")
 
-    nudges = parse_srt(srt_path, wordlist, offset=args.offset)
+    offset = args.offset if args.offset is not None else 0.0
+    nudges = parse_srt(srt_path, wordlist, offset=offset)
     print(f"Found {len(nudges)} nudge points in {srt_path.name}")
 
     if not nudges:
@@ -213,7 +214,7 @@ def cmd_test(args):
             unpause_service()
 
 
-async def _run_test(identifier: str, nudges: list[dict], srt_path: Path, offset: float, save: bool, force: bool) -> int:
+async def _run_test(identifier: str, nudges: list[dict], srt_path: Path, offset: float | None, save: bool, force: bool) -> int:
     """Run the interactive test session or save directly."""
     atv = await connect_to_device(identifier)
     if not atv:
@@ -242,7 +243,8 @@ async def _run_test(identifier: str, nudges: list[dict], srt_path: Path, offset:
         )
         print(f"  ID:       {content_id}")
 
-        if offset != 0:
+        # Display offset if explicitly specified
+        if offset is not None and offset != 0:
             print(f"\n  Offset:   {offset:+.1f}s applied")
 
         if save:
@@ -819,7 +821,7 @@ def main():
     test_parser.add_argument(
         "--offset",
         type=float,
-        default=0.0,
+        default=None,
         help="Time offset in seconds (positive or negative)",
     )
     test_parser.add_argument(
