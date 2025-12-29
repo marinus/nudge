@@ -327,11 +327,11 @@ HTML_TEMPLATE = """
                 devicesEl.innerHTML = '<div class="no-devices">No paired Apple TVs found</div>';
             } else {
                 devicesEl.innerHTML = data.devices.map(device => {
-                    const statusClass = device.status === 'Playing' ? 'playing' : '';
+                    const statusClass = (device.status === 'Playing' || device.status === 'Monitoring') ? 'playing' : '';
 
-                    // Artwork section - show for both Playing and Paused
+                    // Artwork section - show for Playing, Paused, and Monitoring
                     let artworkHtml = '';
-                    const isActive = device.status === 'Playing' || device.status === 'Paused';
+                    const isActive = device.status === 'Playing' || device.status === 'Paused' || device.status === 'Monitoring';
                     const clickable = device.matched && device.content_id ? 'clickable' : '';
                     const dataAttr = clickable ? `data-content-id="${device.content_id}"` : '';
                     if (device.has_artwork && isActive) {

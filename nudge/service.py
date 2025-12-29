@@ -296,12 +296,16 @@ class NudgeService:
                 identifier = device["identifier"]
                 state = self.device_states.get(identifier, {})
 
+                # For monitored devices, use title/app from device_states (last_devices has None)
+                title = device.get("title") or state.get("title")
+                app = device.get("app") or state.get("app")
+
                 device_info = {
                     "identifier": identifier,
                     "name": device["name"],
                     "status": device["status"],
-                    "title": device.get("title"),
-                    "app": device.get("app"),
+                    "title": title,
+                    "app": app,
                     "matched": state.get("matched", False),
                     "nudge_count": state.get("nudge_count", 0),
                     "content_id": state.get("content_id"),
@@ -311,10 +315,17 @@ class NudgeService:
 
                 devices.append(device_info)
 
-            self.web_server.broadcast(
-                state=get_state(),
-                pause_remaining=get_pause_remaining(),
-                devices=devices,
+            # Sort devices by name
+            devices.sort(key=lambda d: d["name"].lower())
+
+            # Run blocking WebSocket broadcast in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                self.web_server.broadcast,
+                get_state(),
+                get_pause_remaining(),
+                devices,
             )
         except Exception:
             pass  # Don't let broadcast errors affect service
