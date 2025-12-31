@@ -404,6 +404,10 @@ class NudgeService:
 
     async def on_playback_start(self, identifier: str, name: str, title: str, app: str):
         """Handle playback start - try to match and start monitoring."""
+        # Clear stale artwork when new content starts
+        if identifier in self.artwork_cache:
+            del self.artwork_cache[identifier]
+
         # Connect to get duration
         atv = await connect_to_device(identifier)
         if not atv:
@@ -423,7 +427,11 @@ class NudgeService:
             # Try to match content
             store_id = metadata.get("store_id")
             content_id = generate_content_id(title, duration, app, store_id)
-            content, nudges = load_content_with_nudges(content_id)
+            try:
+                content, nudges = load_content_with_nudges(content_id)
+            except Exception as e:
+                self.logger.error(f"{name} | Failed to load content {content_id}: {e}")
+                content, nudges = None, []
 
             # Log content detection
             self.logger.info(f"{name} | Playing | {title}")

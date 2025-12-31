@@ -1,6 +1,8 @@
 """Nudge CLI interface."""
 
 import argparse
+import json
+import zipfile
 
 from nudge import __version__
 import asyncio
@@ -20,6 +22,7 @@ from nudge.content import (
     generate_content_id,
     get_content_directory,
     get_content_path,
+    get_srt_path,
     list_content,
     load_content,
     load_content_with_nudges,
@@ -442,6 +445,148 @@ def cmd_remove(args):
         return 1
 
 
+def cmd_export(args):
+    """Handle the export command."""
+    output_path = Path(args.output) if args.output else Path("nudge-export.zip")
+
+    # Ensure .zip extension
+    if not output_path.suffix == ".zip":
+        output_path = output_path.with_suffix(".zip")
+
+    content_dir = get_content_directory()
+    content_list = list_content()
+
+    if not content_list:
+        print("No content to export.")
+        return 1
+
+    print(f"Exporting {len(content_list)} content item(s)...")
+
+    with zipfile.ZipFile(output_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        exported = 0
+        for item in content_list:
+            content_id = item["id"]
+            title = item["title"]
+
+            # Export JSON
+            json_path = get_content_path(content_id)
+            if json_path.exists():
+                zf.write(json_path, f"content/{json_path.name}")
+                print(f"  {json_path.name:<20} {title}")
+                exported += 1
+
+            # Export SRT if exists
+            srt_path = get_srt_path(content_id)
+            if srt_path.exists():
+                zf.write(srt_path, f"content/{srt_path.name}")
+
+        # Export wordlist if requested
+        if not args.no_wordlist:
+            wordlist_path = get_wordlist_path()
+            if wordlist_path.exists():
+                zf.write(wordlist_path, "wordlist.txt")
+                print(f"  wordlist.txt")
+
+    print(f"\nExported to: {output_path}")
+    print(f"Total: {exported} content item(s)")
+    return 0
+
+
+def cmd_import(args):
+    """Handle the import command."""
+    input_path = Path(args.input)
+
+    if not input_path.exists():
+        print(f"File not found: {input_path}")
+        return 1
+
+    if not zipfile.is_zipfile(input_path):
+        print(f"Not a valid zip file: {input_path}")
+        return 1
+
+    force = args.force
+    dry_run = args.dry_run
+
+    if dry_run:
+        print(f"Dry run - no changes will be made\n")
+
+    print(f"Importing from {input_path}...")
+    print()
+
+    content_dir = get_content_directory()
+    new_count = 0
+    overwrite_count = 0
+    skip_count = 0
+
+    with zipfile.ZipFile(input_path, "r") as zf:
+        # Get list of files in archive
+        names = zf.namelist()
+
+        # Process content files
+        json_files = [n for n in names if n.startswith("content/") and n.endswith(".json")]
+
+        for json_name in json_files:
+            # Read JSON to get title
+            try:
+                with zf.open(json_name) as f:
+                    data = json.load(f)
+                    title = data.get("title", "Unknown")
+                    content_id = data.get("id", Path(json_name).stem)
+            except (json.JSONDecodeError, KeyError):
+                title = "Unknown"
+                content_id = Path(json_name).stem
+
+            # Check if exists
+            dest_json = content_dir / Path(json_name).name
+            exists = dest_json.exists()
+
+            # Determine action
+            if exists and not force:
+                status = "SKIP - exists"
+                skip_count += 1
+            elif exists:
+                status = "OVERWRITE"
+                overwrite_count += 1
+            else:
+                status = "NEW"
+                new_count += 1
+
+            print(f"  {Path(json_name).name:<20} {title:<30} [{status}]")
+
+            # Extract if not dry run and not skipping
+            if not dry_run and status != "SKIP - exists":
+                zf.extract(json_name, content_dir.parent)
+
+                # Also extract SRT if exists
+                srt_name = json_name.replace(".json", ".srt")
+                if srt_name in names:
+                    zf.extract(srt_name, content_dir.parent)
+
+        # Import wordlist if present and requested
+        if "wordlist.txt" in names and not args.no_wordlist:
+            wordlist_dest = get_wordlist_path()
+            if wordlist_dest.exists() and not force:
+                print(f"  wordlist.txt                                      [SKIP - exists]")
+            else:
+                status = "OVERWRITE" if wordlist_dest.exists() else "NEW"
+                print(f"  wordlist.txt                                      [{status}]")
+                if not dry_run:
+                    with zf.open("wordlist.txt") as src:
+                        wordlist_dest.write_bytes(src.read())
+
+    print()
+    summary = f"Imported: {new_count} new"
+    if overwrite_count > 0:
+        summary += f", {overwrite_count} overwritten"
+    if skip_count > 0:
+        summary += f", {skip_count} skipped"
+    if dry_run:
+        summary += " (dry run)"
+    print(summary)
+
+    return 0
+
+
 def format_timestamp(seconds: float) -> str:
     """Format seconds as H:MM:SS or M:SS."""
     hours = int(seconds // 3600)
@@ -479,6 +624,100 @@ def find_content_id(query: str) -> str | None:
             return item["id"]
 
     return None
+
+
+def cmd_verify(args):
+    """Handle the verify command - verify content loads without errors."""
+    query = args.content
+
+    content_id = find_content_id(query)
+    if not content_id:
+        print(f"Content not found: {query}")
+        print("\nUse 'nudge list' to see available content.")
+        return 1
+
+    content = load_content(content_id)
+    if not content:
+        print(f"Failed to load content: {content_id}")
+        return 1
+
+    print(f"Verifying: {content['title']} ({content_id})")
+    print()
+
+    errors = []
+    warnings = []
+
+    # Check nudges structure
+    nudges_dict = content.get("nudges", {})
+    if not nudges_dict:
+        warnings.append("No nudges section found")
+
+    # Import parse functions
+    from nudge.content import parse_time_range, parse_time
+
+    total_nudges = 0
+    for category in ["violence", "sex", "other"]:
+        category_nudges = nudges_dict.get(category, [])
+        for i, nudge in enumerate(category_nudges, 1):
+            total_nudges += 1
+            prefix = f"[{category}#{i}]"
+
+            # Check time field
+            if "time" not in nudge:
+                errors.append(f"{prefix} Missing 'time' field")
+                continue
+
+            try:
+                start_time, range_duration = parse_time_range(nudge["time"])
+                if start_time < 0:
+                    errors.append(f"{prefix} Negative start time: {start_time}")
+
+                # Check duration
+                if range_duration is not None:
+                    if range_duration <= 0:
+                        errors.append(f"{prefix} Invalid duration from range: {range_duration:.1f}s (end before start?)")
+                    elif range_duration > 600:
+                        warnings.append(f"{prefix} Very long duration: {range_duration:.1f}s ({range_duration/60:.1f} min)")
+                elif "duration" not in nudge:
+                    warnings.append(f"{prefix} No duration specified, using default (5s)")
+                else:
+                    dur = parse_time(nudge["duration"])
+                    if dur <= 0:
+                        errors.append(f"{prefix} Invalid duration: {dur}")
+                    elif dur > 600:
+                        warnings.append(f"{prefix} Very long duration: {dur:.1f}s ({dur/60:.1f} min)")
+
+            except Exception as e:
+                errors.append(f"{prefix} Parse error: {e}")
+
+    # Try full load to catch any other issues
+    try:
+        _, all_nudges = load_content_with_nudges(content_id)
+    except Exception as e:
+        errors.append(f"Failed to load nudges: {e}")
+        all_nudges = []
+
+    # Report results
+    if errors:
+        print("ERRORS:")
+        for err in errors:
+            print(f"  ✗ {err}")
+        print()
+
+    if warnings:
+        print("WARNINGS:")
+        for warn in warnings:
+            print(f"  ⚠ {warn}")
+        print()
+
+    if errors:
+        print(f"FAILED: {len(errors)} error(s) found")
+        return 1
+
+    print(f"OK: {len(all_nudges)} nudges loaded successfully")
+    if warnings:
+        print(f"    ({len(warnings)} warning(s))")
+    return 0
 
 
 def cmd_nudges(args):
@@ -538,11 +777,10 @@ def cmd_nudges(args):
     return 0
 
 
-def cmd_dryrun(args):
-    """Handle the dryrun command - test all nudges by jumping through them."""
+def cmd_simulate(args):
+    """Handle the simulate command - rapidly test all nudges."""
     query = args.content
-    start_index = args.start - 1 if args.start else 0  # Convert to 0-based
-    delay = args.delay
+    start_index = args.start - 1 if args.start else 0
 
     # Find content
     content_id = find_content_id(query)
@@ -565,18 +803,17 @@ def cmd_dryrun(args):
         print(f"Start index {args.start} exceeds nudge count ({len(nudges)})")
         return 1
 
-    # Pause service if running (avoid conflict)
+    # Pause service if running
     service_was_running = is_running() and not is_paused()
     if service_was_running:
-        print("Pausing service for dryrun...")
+        print("Pausing service for simulation...")
         pause_service()
 
-    print(f"\nDryrun: {content['title']} - {len(nudges)} nudges")
+    print(f"\nSimulate: {content['title']} - {len(nudges)} nudges")
     print()
 
     # Find device
     if args.device and ":" in args.device:
-        # MAC address provided - skip scan
         identifier = args.device
         device_name = "Device"
     else:
@@ -589,7 +826,6 @@ def cmd_dryrun(args):
             return 1
 
         if args.device:
-            # Find by name
             matches = [d for d in paired if args.device.lower() in d["name"].lower()]
             if not matches:
                 print(f"Device not found: {args.device}")
@@ -605,13 +841,11 @@ def cmd_dryrun(args):
     print(f"Starting from nudge #{start_index + 1}")
     print()
 
-    # Run the dryrun
     try:
-        result = asyncio.run(run_dryrun(
-            identifier, device_name, nudges, start_index, delay, content['title']
+        result = asyncio.run(run_simulate(
+            identifier, device_name, nudges, start_index, content['title'], args.pause
         ))
     finally:
-        # Resume service if we paused it
         if service_was_running:
             print("\nResuming service...")
             unpause_service()
@@ -619,15 +853,15 @@ def cmd_dryrun(args):
     return result
 
 
-async def run_dryrun(
+async def run_simulate(
     identifier: str,
     name: str,
     nudges: list[dict],
     start_index: int,
-    delay: float,
     title: str,
+    pause_mode: bool,
 ) -> int:
-    """Execute dryrun - jump through all nudges."""
+    """Execute simulate - rapidly jump through all nudges."""
     from nudge.atv import connect_to_device, get_playing_metadata, set_position
     from nudge.config import get_nudge_buffer, get_nudge_lead
 
@@ -642,7 +876,7 @@ async def run_dryrun(
     if not metadata:
         print("FAILED")
         print("\nError: Content must be playing on the AppleTV.")
-        print("Start playing the content first, then run dryrun.")
+        print("Start playing the content first, then run simulate.")
         atv.close()
         return 1
 
@@ -664,101 +898,58 @@ async def run_dryrun(
             nudge_time = nudge["time"]
             nudge_duration = nudge["duration"]
             nudge_type = nudge.get("type", "language")
-            nudge_text = nudge.get("text", "")[:35]
-            if len(nudge.get("text", "")) > 35:
-                nudge_text += "..."
 
-            # Format nudge info
-            time_str = format_timestamp(nudge_time)
-            print(f"[{i}/{len(nudges)}]  {time_str} ({int(nudge_time)}s) {nudge_type}")
-            if nudge_text:
-                print(f"        \"{nudge_text}\"")
-
-            # Jump to just before the nudge
-            approach_pos = max(0, nudge_time - nudge_lead - 1)
-            print(f"        Jumping to {int(approach_pos)}s... ", end="", flush=True)
-
-            # Seek and wait for AppleTV to process
-            await set_position(atv, approach_pos)
-            await asyncio.sleep(2.0)  # AppleTV needs time to seek and buffer
-
-            # Wait for playback to resume (up to 10 attempts)
-            metadata = None
-            for attempt in range(10):
-                try:
-                    metadata = await get_playing_metadata(atv)
-                    if metadata:
-                        break
-                except Exception:
-                    pass
-                await asyncio.sleep(0.5)
-
-            if not metadata:
-                print("SEEK FAILED (no playback) ✗")
-                missed += 1
-                # Try to recover - wait and continue
-                await asyncio.sleep(2.0)
-                continue
-
-            current_pos = metadata.get("position", 0)
-            print(f"at {int(current_pos)}s... ", end="", flush=True)
-
-            # Wait for position to enter nudge window
+            # Calculate positions
+            approach_pos = max(0, nudge_time - 1)  # 1 second before nudge
             window_start = nudge_time - nudge_lead
             window_end = nudge_time + nudge_duration
             skip_to = nudge_time + nudge_duration + nudge_buffer
 
-            # Wait up to 10 seconds for position to reach nudge window
-            max_wait = 10.0
-            check_interval = 0.3
-            elapsed = 0.0
+            # Jump to 1s before nudge
+            print(f"[{i}/{len(nudges)}] Jumping to {format_timestamp(approach_pos)}...", end="", flush=True)
+            await set_position(atv, approach_pos)
+            await asyncio.sleep(1.5)  # Wait for seek
+
+            # Wait for nudge window (up to 5 seconds)
             in_window = False
-
-            while elapsed < max_wait:
-                await asyncio.sleep(check_interval)
-                elapsed += check_interval
-
+            for _ in range(20):
                 metadata = await get_playing_metadata(atv)
                 if not metadata:
-                    continue  # Brief interruption, keep waiting
+                    await asyncio.sleep(0.25)
+                    continue
 
                 pos = metadata.get("position", 0)
-
-                # Check if we're in the nudge window
                 if window_start <= pos < window_end:
                     in_window = True
-                    print(f"in window... ", end="", flush=True)
-
-                    # Simulate nudge - skip forward
+                    # Perform skip
                     await set_position(atv, skip_to)
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(0.5)
 
-                    # Verify skip worked
+                    # Verify
                     metadata = await get_playing_metadata(atv)
-                    if metadata:
-                        final_pos = metadata.get("position", 0)
-                        if final_pos >= skip_to - 2:
-                            print(f"SKIP -> {int(final_pos)}s ✓")
-                            triggered += 1
-                        else:
-                            print(f"SKIP FAILED (at {int(final_pos)}s) ✗")
-                            missed += 1
-                    else:
-                        print(f"SKIP -> {int(skip_to)}s ✓")
+                    final_pos = metadata.get("position", 0) if metadata else skip_to
+                    if final_pos >= skip_to - 2:
+                        print(f"\n       {format_timestamp(nudge_time)} | NUDGE {nudge_type} -> {format_timestamp(final_pos)} ✓")
                         triggered += 1
+                        # Play 1s after skip so user can see/hear where it landed
+                        await asyncio.sleep(1.0)
+                    else:
+                        print(f"\n       {format_timestamp(nudge_time)} | SKIP FAILED ✗")
+                        missed += 1
                     break
 
+                await asyncio.sleep(0.25)
+
             if not in_window:
-                # Never reached the window
-                print(f"TIMEOUT (never reached window) ✗")
+                print(f"\n       {format_timestamp(nudge_time)} | TIMEOUT ✗")
                 missed += 1
 
-            # Delay before next nudge
-            if i < len(nudges):
-                await asyncio.sleep(delay)
+            # Pause mode - wait for user
+            if pause_mode and i < len(nudges):
+                input("       Press ENTER for next...")
 
         print()
-        print(f"Summary: {triggered}/{total} triggered, {missed} missed")
+        print(f"Complete: {triggered}/{total} nudges triggered" + (f", {missed} missed" if missed else ""))
 
         return 0 if missed == 0 else 1
 
@@ -878,6 +1069,43 @@ def main():
     )
     remove_parser.set_defaults(func=cmd_remove)
 
+    # export command
+    export_parser = subparsers.add_parser("export", help="Export content database to zip")
+    export_parser.add_argument(
+        "output",
+        nargs="?",
+        help="Output zip file (default: nudge-export.zip)",
+    )
+    export_parser.add_argument(
+        "--no-wordlist",
+        action="store_true",
+        help="Exclude wordlist from export",
+    )
+    export_parser.set_defaults(func=cmd_export)
+
+    # import command
+    import_parser = subparsers.add_parser("import", help="Import content database from zip")
+    import_parser.add_argument(
+        "input",
+        help="Input zip file to import",
+    )
+    import_parser.add_argument(
+        "--force", "-f",
+        action="store_true",
+        help="Overwrite existing content",
+    )
+    import_parser.add_argument(
+        "--dry-run", "-n",
+        action="store_true",
+        help="Show what would be imported without making changes",
+    )
+    import_parser.add_argument(
+        "--no-wordlist",
+        action="store_true",
+        help="Don't import wordlist even if present",
+    )
+    import_parser.set_defaults(func=cmd_import)
+
     # nudges command
     nudges_parser = subparsers.add_parser("nudges", help="Show nudges for content")
     nudges_parser.add_argument(
@@ -886,29 +1114,36 @@ def main():
     )
     nudges_parser.set_defaults(func=cmd_nudges)
 
-    # dryrun command
-    dryrun_parser = subparsers.add_parser("dryrun", help="Test nudges by jumping through them")
-    dryrun_parser.add_argument(
+    # verify command
+    verify_parser = subparsers.add_parser("verify", help="Verify content loads without errors")
+    verify_parser.add_argument(
         "content",
         help="Content ID, filename, or partial title",
     )
-    dryrun_parser.add_argument(
-        "--device", "-D",
-        help="Device name or MAC address (uses first paired device if not specified)",
+    verify_parser.set_defaults(func=cmd_verify)
+
+    # simulate command
+    simulate_parser = subparsers.add_parser("simulate", help="Rapidly test all nudges")
+    simulate_parser.add_argument(
+        "content",
+        help="Content ID, filename, or partial title",
     )
-    dryrun_parser.add_argument(
+    simulate_parser.add_argument(
+        "--device", "-D",
+        help="Device name or MAC address",
+    )
+    simulate_parser.add_argument(
         "--start", "-s",
         type=int,
         default=1,
         help="Start from nudge number (default: 1)",
     )
-    dryrun_parser.add_argument(
-        "--delay", "-d",
-        type=float,
-        default=2.0,
-        help="Delay between nudges in seconds (default: 2)",
+    simulate_parser.add_argument(
+        "--pause", "-p",
+        action="store_true",
+        help="Pause after each nudge for manual review",
     )
-    dryrun_parser.set_defaults(func=cmd_dryrun)
+    simulate_parser.set_defaults(func=cmd_simulate)
 
     args = parser.parse_args()
 

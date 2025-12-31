@@ -79,6 +79,10 @@ See [QUICKSTART.md](QUICKSTART.md) for detailed setup instructions.
 | `uv run nudge test <srt> --save` | Save content configuration |
 | `uv run nudge list` | List saved content |
 | `uv run nudge nudges <title>` | View nudges for content |
+| `uv run nudge verify <title>` | Verify content loads without errors |
+| `uv run nudge simulate <title>` | Rapidly test all nudges on device |
+| `uv run nudge export` | Export content database to zip |
+| `uv run nudge import <zip>` | Import content database from zip |
 | `uv run nudge start` | Start background service |
 | `uv run nudge stop` | Stop service |
 | `uv run nudge status` | Check service and device status |

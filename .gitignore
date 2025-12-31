@@ -21,3 +21,5 @@ venv/
 nudge-data/
 nudge.egg-info/
 .claude
+*.zip
+

@@ -84,18 +84,18 @@ Edit the content file (default: `nudge-data/content/{id}.json`):
 {
   "nudges": {
     "violence": [
-      {"time": "45:30", "duration": 15, "note": "Fight scene"},
-      {"time": "1:32:00", "duration": 20, "note": "Car chase crash"}
+      {"time": "45:30 - 45:45", "note": "Fight scene"},
+      {"time": "1:32:00 - 1:32:20", "note": "Car chase crash"}
     ],
     "sex": [
-      {"time": "28:15", "duration": 30, "note": "Bedroom scene"}
+      {"time": "28:15 - 28:45", "note": "Bedroom scene"}
     ],
     "other": []
   }
 }
 ```
 
-Times can be `MM:SS`, `HH:MM:SS`, or seconds (e.g., `"1:32:00"` or `5520`).
+Use `start - end` format (e.g., `"1:32:00 - 1:32:20"`) - duration is calculated automatically.
 
 ## 8. Start the Service
 
@@ -122,6 +122,10 @@ Open http://localhost:8080 in your browser to see:
 | `uv run nudge test <srt> --save` | Save after testing |
 | `uv run nudge list` | List saved content |
 | `uv run nudge nudges <title>` | View nudges for content |
+| `uv run nudge verify <title>` | Verify content loads without errors |
+| `uv run nudge simulate <title>` | Rapidly test all nudges on device |
+| `uv run nudge export` | Export content database to zip |
+| `uv run nudge import <zip>` | Import content database from zip |
 | `uv run nudge start` | Start background service |
 | `uv run nudge stop` | Stop service |
 | `uv run nudge status` | Check service status |
@@ -132,4 +136,6 @@ Open http://localhost:8080 in your browser to see:
 - **Faster testing**: Use `--device XX:XX:XX:XX:XX:XX` to skip device scanning
 - **Debug mode**: `uv run nudge start --debug` for verbose logging
 - **View nudges**: `uv run nudge nudges "Movie Title"` to see all skip points
-- **Test nudges**: `uv run nudge dryrun "Movie Title"` to jump through all nudges on the AppleTV
+- **Verify content**: `uv run nudge verify "Movie Title"` to check for parsing errors
+- **Test nudges**: `uv run nudge simulate "Movie Title"` to rapidly test all nudges on the AppleTV
+- **Backup**: `uv run nudge export` to backup your content database

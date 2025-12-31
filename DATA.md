@@ -65,18 +65,18 @@ Manually added to the content JSON file:
   "updated": "2025-12-27T13:30:42",
   "nudges": {
     "violence": [
-      {"time": "32:15", "duration": 8, "note": "Fight in parking garage"},
-      {"time": "1:45:30", "duration": 12, "note": "Train crash scene"}
+      {"time": "32:15 - 32:23", "note": "Fight in parking garage"},
+      {"time": "1:45:30 - 1:45:42", "note": "Train crash scene"}
     ],
     "sex": [],
     "other": [
-      {"time": "58:20", "duration": 3, "note": "Graphic surgery"}
+      {"time": "58:20 - 58:23", "note": "Graphic surgery"}
     ]
   }
 }
 ```
 
-Note: Times use `MM:SS` or `HH:MM:SS` format for readability. Seconds also work (e.g., `1935` instead of `"32:15"`).
+Note: Times use `start - end` format for easy editing. The duration is calculated automatically.
 
 ### Fields
 
@@ -94,36 +94,38 @@ Note: Times use `MM:SS` or `HH:MM:SS` format for readability. Seconds also work 
 ### Nudge Entry Format
 
 ```json
-{"time": "1:23:45", "duration": 10, "note": "Description"}
+{"time": "1:23:45 - 1:23:55", "note": "Description"}
 ```
 
-- `time` - Start time as timestamp (`HH:MM:SS`, `MM:SS`) or seconds (`5025`)
-- `duration` - Duration to skip in seconds
+- `time` - Time range as `start - end` (duration calculated automatically)
 - `note` - Optional description
 
-### Timestamp Format
+### Time Range Format
 
-Time values support multiple formats for convenience:
+Use `start - end` format for easy editing:
 
-| Format | Example | Seconds |
-|--------|---------|---------|
-| Seconds | `120.5` | 120.5 |
-| MM:SS | `"2:00"` | 120.0 |
-| HH:MM:SS | `"1:30:45"` | 5445.0 |
+| Format | Example | Duration |
+|--------|---------|----------|
+| MM:SS range | `"2:00 - 2:10"` | 10s |
+| HH:MM:SS range | `"1:30:45 - 1:31:00"` | 15s |
+| Mixed | `"45:30 - 46:00"` | 30s |
 
-Example using timestamps:
+Example:
 ```json
 {
   "nudges": {
     "violence": [
-      {"time": "45:30", "duration": 5, "note": "Fight scene"},
-      {"time": "1:23:45", "duration": 10, "note": "Battle sequence"}
+      {"time": "45:30 - 45:35", "note": "Fight scene"},
+      {"time": "1:23:45 - 1:23:55", "note": "Battle sequence"}
     ]
   }
 }
 ```
 
-Note: Timestamps must be quoted strings in JSON. Seconds can be numbers or strings.
+Legacy format with explicit duration is also supported:
+```json
+{"time": "1:23:45", "duration": 10, "note": "Description"}
+```
 
 ## Wordlist Format
 
@@ -211,42 +213,106 @@ This shows:
 - **Type**: `language` (from SRT + wordlist) or scene type (`violence`, `sex`, `other`)
 - **Note**: Description (from SRT text or JSON note field)
 
-## Testing Nudges (Dryrun)
+## Verifying Content
 
-Test all nudges by jumping through them on the AppleTV:
+Check that content loads without parsing errors:
 
 ```bash
-nudge dryrun Midway                      # Test all nudges
-nudge dryrun Midway --device XX:XX:XX    # Specific device
-nudge dryrun Midway --start 5            # Start from nudge #5
-nudge dryrun Midway --delay 3            # 3s delay between nudges
+nudge verify Midway                      # Verify content
+nudge verify 1504294067                  # By content ID
 ```
-
-The content must be playing on the AppleTV. The dryrun will:
-1. Pause the service (to avoid conflicts)
-2. Jump to just before each nudge
-3. Wait for playback to reach the nudge window
-4. Trigger the skip and verify it worked
-5. Resume the service when done
 
 Example output:
 
 ```
-Dryrun: Midway (2019) - 51 nudges
+Verifying: Midway (2019) (1504294067)
 
-[1/51]  7:25 (445s) language
-        "Better not crash that damn plane."
-        Jumping to 443s... waiting... TRIGGERED -> 449s ✓
+OK: 51 nudges loaded successfully
+```
 
-[2/51]  8:20 (500s) language
-        "McClusky's about ready..."
-        Jumping to 498s... waiting... TRIGGERED -> 504s ✓
+If there are errors:
 
-[3/51]  8:51 (531s) language
-        "It's probably 'cause..."
-        Jumping to 529s... waiting... MISSED (position: 535s) ✗
+```
+ERRORS:
+  ✗ [violence#2] Invalid duration from range: -10.0s (end before start?)
 
-Summary: 49/51 triggered, 2 missed
+WARNINGS:
+  ⚠ [other#1] Very long duration: 720.0s (12.0 min)
+
+FAILED: 1 error(s) found
+```
+
+## Simulating Nudges
+
+Rapidly test all nudges by jumping through them on the AppleTV:
+
+```bash
+nudge simulate Midway                    # Test all nudges
+nudge simulate Midway --device XX:XX:XX  # Specific device
+nudge simulate Midway --start 5          # Start from nudge #5
+nudge simulate Midway --pause            # Pause after each nudge
+```
+
+The content must be playing on the AppleTV. The simulate will:
+1. Pause the service (to avoid conflicts)
+2. Jump to 1s before each nudge
+3. Wait for playback to reach the nudge window
+4. Trigger the skip and verify it worked
+5. Play 1s after the skip so you can see/hear where it landed
+6. Immediately jump to the next nudge
+7. Resume the service when done
+
+Example output:
+
+```
+Simulate: Midway (2019) - 51 nudges
+
+Checking playback... OK
+Playing: Midway (2019) at 0:05:23
+
+[1/51] Jumping to 7:24...
+       7:25 | NUDGE language -> 7:31 ✓
+[2/51] Jumping to 8:19...
+       8:20 | NUDGE language -> 8:26 ✓
+[3/51] Jumping to 8:50...
+       8:51 | NUDGE language -> 8:57 ✓
+
+Complete: 51/51 nudges triggered
+```
+
+## Export and Import
+
+Backup and restore your content database:
+
+### Export
+
+```bash
+nudge export                      # Export to nudge-export.zip
+nudge export backup.zip           # Export to specific file
+nudge export --no-wordlist        # Exclude wordlist
+```
+
+Creates a zip containing all content JSON files, SRT files, and optionally the wordlist.
+
+### Import
+
+```bash
+nudge import backup.zip           # Import, skip existing content
+nudge import backup.zip --force   # Overwrite existing content
+nudge import backup.zip --dry-run # Preview without making changes
+nudge import backup.zip --no-wordlist  # Don't import wordlist
+```
+
+Example output:
+
+```
+Importing from backup.zip...
+
+  414711948.json       Tron: Legacy                   [NEW]
+  282551004.json       The Fugitive                   [SKIP - exists]
+  1504294067.json      Midway (2019)                  [OVERWRITE]
+
+Imported: 1 new, 1 overwritten, 1 skipped
 ```
 
 ## Config Options

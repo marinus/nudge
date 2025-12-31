@@ -63,7 +63,7 @@ def parse_time(value) -> float:
     if isinstance(value, (int, float)):
         return float(value)
 
-    value = str(value)
+    value = str(value).strip()
     if ":" in value:
         parts = value.split(":")
         try:
@@ -77,6 +77,30 @@ def parse_time(value) -> float:
             pass
 
     return float(value)
+
+
+def parse_time_range(value) -> tuple[float, float]:
+    """
+    Parse time range - supports "start - end" format or single time.
+
+    Examples:
+        "00:01:01 - 00:10:00" -> (61.0, 539.0)  # duration = 539
+        "1:23:45 - 1:30:00" -> (5025.0, 375.0)  # duration = 375
+        "01:23:45" -> (5025.0, None)  # no end time, duration must be specified separately
+
+    Returns:
+        Tuple of (start_time, duration) where duration is None if not a range.
+    """
+    value = str(value).strip()
+
+    if " - " in value:
+        start_str, end_str = value.split(" - ", 1)
+        start_time = parse_time(start_str.strip())
+        end_time = parse_time(end_str.strip())
+        duration = end_time - start_time
+        return start_time, duration
+
+    return parse_time(value), None
 
 
 def load_content_with_nudges(content_id: str) -> tuple[dict | None, list[dict]]:
@@ -108,13 +132,24 @@ def load_content_with_nudges(content_id: str) -> tuple[dict | None, list[dict]]:
     # Add scene nudges from stored content
     nudges_dict = content.get("nudges", {})
     for category in ["violence", "sex", "other"]:
-        for nudge in nudges_dict.get(category, []):
-            all_nudges.append({
-                "time": parse_time(nudge["time"]),
-                "duration": parse_time(nudge.get("duration", 5)),
-                "type": category,
-                "text": nudge.get("note", ""),
-            })
+        for i, nudge in enumerate(nudges_dict.get(category, []), 1):
+            try:
+                # Parse time - supports "00:01:01 - 00:10:00" range format
+                start_time, range_duration = parse_time_range(nudge["time"])
+                # Use duration from range if available, otherwise use explicit duration field
+                duration = range_duration if range_duration is not None else parse_time(nudge.get("duration", 5))
+                all_nudges.append({
+                    "time": start_time,
+                    "duration": duration,
+                    "type": category,
+                    "text": nudge.get("note", ""),
+                })
+            except (KeyError, ValueError, TypeError) as e:
+                # Skip malformed nudges but continue processing others
+                import logging
+                logging.getLogger("nudge").warning(
+                    f"Skipping malformed nudge [{category}#{i}]: {e}"
+                )
 
     # Sort all nudges by time
     all_nudges.sort(key=lambda x: x["time"])
