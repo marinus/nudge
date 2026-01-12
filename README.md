@@ -5,6 +5,11 @@
 # Nudge
 
 Automatically skip objectionable content on your AppleTV.
+<div style="height: 16px;"></div>
+<p align="center" style="display:flex; justify-content:center; gap:12px;">
+  <img src="example.png">
+  <img src="detail.png">
+</p>
 
 ## The Problem
 
