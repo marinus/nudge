@@ -49,11 +49,21 @@ git clone https://github.com/yourusername/nudge.git
 cd nudge
 
 # Find and pair with your AppleTV
-uv run nudge scan
 uv run nudge pair
 
-# Add content (while movie is playing)
-uv run nudge test ~/Downloads/movie.srt --save
+# Test subtitles (while movie is playing)
+uv run nudge test ~/Downloads/movie.srt
+
+# Make minor adjustments, if necessary
+uv run nudge test ~/Downloads/movie.srt --offest 2
+
+# Add content
+uv run nudge test ~/Downloads/movie.srt --offest 2 --save
+
+# List known content
+uv run nudge list
+
+# Manually add additional nudges by editing the content file for the title
 
 # Start the service
 uv run nudge start
