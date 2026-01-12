@@ -262,6 +262,72 @@ HTML_TEMPLATE = """
         .device-artwork.clickable:hover {
             transform: scale(1.05);
         }
+
+        /* Watch history styles */
+        .history-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+        .history-nav {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .history-nav button {
+            background: #1e2a4a;
+            border: none;
+            color: #888;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .history-nav button:hover {
+            background: #2a3a5a;
+            color: #fff;
+        }
+        .history-nav button:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+        .history-date {
+            color: #fff;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .history-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .history-item {
+            display: flex;
+            gap: 12px;
+            padding: 10px 12px;
+            background: #1e2a4a;
+            border-radius: 6px;
+        }
+        .history-time {
+            color: #888;
+            font-size: 13px;
+            font-family: monospace;
+            flex-shrink: 0;
+        }
+        .history-title {
+            color: #fff;
+            font-size: 14px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .history-empty {
+            color: #666;
+            text-align: center;
+            padding: 20px;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -272,6 +338,20 @@ HTML_TEMPLATE = """
             <h2>Apple TVs</h2>
             <div id="devices">
                 <div class="no-devices">Waiting for data...</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="history-header">
+                <h2>Watch History</h2>
+                <div class="history-nav">
+                    <button id="history-prev">&lt; Previous</button>
+                    <span class="history-date" id="history-date">Today</span>
+                    <button id="history-next" disabled>Next &gt;</button>
+                </div>
+            </div>
+            <div id="history-list">
+                <div class="history-empty">No watch history</div>
             </div>
         </div>
 
@@ -294,6 +374,80 @@ HTML_TEMPLATE = """
     <script>
         let ws = null;
         let reconnectTimeout = null;
+        let currentHistoryDate = new Date();
+        let todayHistory = [];
+
+        function formatDateLabel(date) {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const target = new Date(date);
+            target.setHours(0, 0, 0, 0);
+
+            if (target.getTime() === today.getTime()) {
+                return 'Today';
+            }
+
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+            if (target.getTime() === yesterday.getTime()) {
+                return 'Yesterday';
+            }
+
+            return target.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        }
+
+        function formatDateStr(date) {
+            return date.toISOString().split('T')[0];
+        }
+
+        function isToday(date) {
+            const today = new Date();
+            return formatDateStr(date) === formatDateStr(today);
+        }
+
+        function renderHistory(items) {
+            const listEl = document.getElementById('history-list');
+            if (!items || items.length === 0) {
+                listEl.innerHTML = '<div class="history-empty">Nothing watched</div>';
+                return;
+            }
+
+            listEl.innerHTML = items.map(item => `
+                <div class="history-item">
+                    <span class="history-time">${escapeHtml(item.time)}</span>
+                    <span class="history-title">${escapeHtml(item.title)}</span>
+                </div>
+            `).join('');
+        }
+
+        function updateHistoryNav() {
+            document.getElementById('history-date').textContent = formatDateLabel(currentHistoryDate);
+            document.getElementById('history-next').disabled = isToday(currentHistoryDate);
+        }
+
+        async function loadHistory(dateStr) {
+            try {
+                const response = await fetch(`/api/history/${dateStr}`);
+                const data = await response.json();
+                renderHistory(data);
+            } catch (err) {
+                renderHistory([]);
+            }
+        }
+
+        function navigateHistory(delta) {
+            currentHistoryDate.setDate(currentHistoryDate.getDate() + delta);
+            updateHistoryNav();
+
+            if (isToday(currentHistoryDate)) {
+                renderHistory(todayHistory);
+            } else {
+                loadHistory(formatDateStr(currentHistoryDate));
+            }
+        }
+
+        document.getElementById('history-prev').addEventListener('click', () => navigateHistory(-1));
+        document.getElementById('history-next').addEventListener('click', () => navigateHistory(1));
 
         function connect() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -321,6 +475,14 @@ HTML_TEMPLATE = """
         }
 
         function updateUI(data) {
+            // Update watch history (only if viewing today)
+            if (data.watch_history !== undefined) {
+                todayHistory = data.watch_history;
+                if (isToday(currentHistoryDate)) {
+                    renderHistory(todayHistory);
+                }
+            }
+
             // Update devices
             const devicesEl = document.getElementById('devices');
             if (!data.devices || data.devices.length === 0) {
@@ -552,6 +714,17 @@ def api_artwork(identifier):
     )
 
 
+@app.route("/api/history/<date_str>")
+def api_history(date_str):
+    """Get watch history for a specific date."""
+    global _service
+    if not _service or not hasattr(_service, 'get_watch_history'):
+        return jsonify([])
+
+    history = _service.get_watch_history(date_str)
+    return jsonify(history)
+
+
 @sock.route("/ws")
 def websocket(ws):
     """WebSocket endpoint for real-time updates."""
@@ -639,10 +812,11 @@ class WebServer:
             threaded=True,
         )
 
-    def broadcast(self, state: str, pause_remaining: int | None, devices: list):
+    def broadcast(self, state: str, pause_remaining: int | None, devices: list, watch_history: list | None = None):
         """Broadcast state update to all clients."""
         broadcast_update({
             "state": state,
             "pause_remaining": pause_remaining,
             "devices": devices,
+            "watch_history": watch_history or [],
         })

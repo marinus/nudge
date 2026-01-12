@@ -4,8 +4,9 @@ import asyncio
 import logging
 import os
 import signal
+import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, date
 
 from nudge import __version__
 
@@ -28,7 +29,7 @@ from nudge.config import (
     get_web_port,
 )
 from nudge.content import generate_content_id, load_content_with_nudges
-from nudge.storage import get_pid_path, get_pause_path, get_state_path, get_debug_path, PAUSE_TIMEOUT
+from nudge.storage import get_pid_path, get_pause_path, get_state_path, get_debug_path, get_watch_history_db_path, PAUSE_TIMEOUT
 
 
 def format_time(seconds: float) -> str:
@@ -226,6 +227,50 @@ class NudgeService:
         self.web_server = None
         self.last_devices: list[dict] = []  # Cache for web broadcast
         self.artwork_cache: dict[str, bytes] = {}  # Artwork cache per device
+        self._init_watch_history_db()
+
+    def _init_watch_history_db(self):
+        """Initialize the watch history SQLite database."""
+        db_path = get_watch_history_db_path()
+        with sqlite3.connect(db_path) as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS watch_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL,
+                    time TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    UNIQUE(date, title)
+                )
+            """)
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON watch_history(date)")
+
+    def record_watched(self, title: str):
+        """Record a title as watched today (deduplicated)."""
+        today = date.today().isoformat()
+        time_str = datetime.now().strftime("%H:%M")
+
+        db_path = get_watch_history_db_path()
+        try:
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO watch_history (date, time, title) VALUES (?, ?, ?)",
+                    (today, time_str, title)
+                )
+        except sqlite3.Error:
+            pass
+
+    def get_watch_history(self, date_str: str) -> list:
+        """Get watch history for a specific date."""
+        db_path = get_watch_history_db_path()
+        try:
+            with sqlite3.connect(db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT time, title FROM watch_history WHERE date = ? ORDER BY time",
+                    (date_str,)
+                )
+                return [{"time": row[0], "title": row[1]} for row in cursor.fetchall()]
+        except sqlite3.Error:
+            return []
 
     async def run(self):
         """Main service loop."""
@@ -318,6 +363,10 @@ class NudgeService:
             # Sort devices by name
             devices.sort(key=lambda d: d["name"].lower())
 
+            # Get today's watch history
+            today = date.today().isoformat()
+            watch_history = self.get_watch_history(today)
+
             # Run blocking WebSocket broadcast in thread pool to avoid blocking event loop
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
@@ -326,6 +375,7 @@ class NudgeService:
                 get_state(),
                 get_pause_remaining(),
                 devices,
+                watch_history,
             )
         except Exception:
             pass  # Don't let broadcast errors affect service
@@ -418,6 +468,7 @@ class NudgeService:
             metadata = await get_playing_metadata(atv)
             if not metadata:
                 self.logger.info(f"{name} | Playing | {title}")
+                self.record_watched(title)
                 log_playback(name, title, app, matched=False)
                 return
 
@@ -433,8 +484,9 @@ class NudgeService:
                 self.logger.error(f"{name} | Failed to load content {content_id}: {e}")
                 content, nudges = None, []
 
-            # Log content detection
+            # Log content detection and record to watch history
             self.logger.info(f"{name} | Playing | {title}")
+            self.record_watched(title)
             id_source = "store_id" if store_id else "hash"
             self.logger.debug(f"{name} | Content ID: {content_id} ({id_source})")
             self.logger.debug(f"{name} | Duration: {format_pos(duration)} | App: {app or 'Unknown'}")

@@ -34,3 +34,8 @@ def get_pause_path():
 def get_debug_path():
     """Get the path to the debug flag file."""
     return get_base_dir() / "nudge.debug"
+
+
+def get_watch_history_db_path():
+    """Get the path to the watch history database."""
+    return get_base_dir() / "watch_history.db"
