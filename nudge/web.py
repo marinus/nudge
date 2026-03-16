@@ -6,6 +6,7 @@ import queue
 import threading
 from flask import Flask, jsonify, render_template_string, request, Response
 from flask_sock import Sock
+from simple_websocket import ConnectionClosed
 
 from nudge.content import load_content_with_nudges
 from nudge.service import get_state, set_state, is_paused, get_pause_remaining, unpause_service
@@ -735,13 +736,8 @@ def websocket(ws):
 
     try:
         while True:
-            # Keep connection alive, receive any messages (we don't use them)
-            try:
-                ws.receive(timeout=1)
-            except Exception:
-                # Timeout is expected, just continue
-                pass
-    except Exception:
+            ws.receive(timeout=1)
+    except (ConnectionClosed, OSError):
         pass
     finally:
         with _clients_lock:
