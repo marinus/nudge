@@ -17,6 +17,7 @@ venv/
 
 # Project specific
 *.conf
+!.service.conf
 *.log
 nudge-data/
 nudge.egg-info/
